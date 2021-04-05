@@ -187,7 +187,7 @@ func (c Certificate) collectStats(report *statsReportCollector) error {
 }
 
 // CertificateFromPEM creates a fresh certificate based on a string containing
-// pem blocks fort the private key and x509 certificate
+// pem blocks for the private key and the x509 certificate
 func CertificateFromPEM(pems string) (*Certificate, error) {
 	// decode & parse the certificate
 	block, more := pem.Decode([]byte(pems))
@@ -216,8 +216,10 @@ func CertificateFromPEM(pems string) (*Certificate, error) {
 	return &x, nil
 }
 
-// PEM returns the certificate encoded as two pem block: once for the X509
-// certificate and the other for the private key
+// PEM returns the certificate encoded as two pem blocks: one for the X509
+// certificate and another for the private key.
+// This function together with `CertificateFromPEM` can be used to preserve
+// the ceritifcate across program activation.
 func (c Certificate) PEM() (string, error) {
 	// First write the X509 certificate
 	var o strings.Builder
