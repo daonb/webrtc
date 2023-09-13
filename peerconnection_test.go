@@ -1,14 +1,18 @@
+// SPDX-FileCopyrightText: 2023 The Pion community <https://pion.ly>
+// SPDX-License-Identifier: MIT
+
 package webrtc
 
 import (
 	"reflect"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/pion/sdp/v3"
-	"github.com/pion/transport/test"
-	"github.com/pion/webrtc/v3/pkg/rtcerr"
+	"github.com/pion/transport/v3/test"
+	"github.com/pion/webrtc/v4/pkg/rtcerr"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -28,7 +32,7 @@ func newPair() (pcOffer *PeerConnection, pcAnswer *PeerConnection, err error) {
 	return pca, pcb, nil
 }
 
-func signalPair(pcOffer *PeerConnection, pcAnswer *PeerConnection) error {
+func signalPairWithModification(pcOffer *PeerConnection, pcAnswer *PeerConnection, modificationFunc func(string) string) error {
 	// Note(albrow): We need to create a data channel in order to trigger ICE
 	// candidate gathering in the background for the JavaScript/Wasm bindings. If
 	// we don't do this, the complete offer including ICE candidates will never be
@@ -46,7 +50,9 @@ func signalPair(pcOffer *PeerConnection, pcAnswer *PeerConnection) error {
 		return err
 	}
 	<-offerGatheringComplete
-	if err = pcAnswer.SetRemoteDescription(*pcOffer.LocalDescription()); err != nil {
+
+	offer.SDP = modificationFunc(pcOffer.LocalDescription().SDP)
+	if err = pcAnswer.SetRemoteDescription(offer); err != nil {
 		return err
 	}
 
@@ -62,6 +68,10 @@ func signalPair(pcOffer *PeerConnection, pcAnswer *PeerConnection) error {
 	return pcOffer.SetRemoteDescription(*pcAnswer.LocalDescription())
 }
 
+func signalPair(pcOffer *PeerConnection, pcAnswer *PeerConnection) error {
+	return signalPairWithModification(pcOffer, pcAnswer, func(sessionDescription string) string { return sessionDescription })
+}
+
 func offerMediaHasDirection(offer SessionDescription, kind RTPCodecType, direction RTPTransceiverDirection) bool {
 	parsed := &sdp.SessionDescription{}
 	if err := parsed.Unmarshal([]byte(offer.SDP)); err != nil {
@@ -75,6 +85,25 @@ func offerMediaHasDirection(offer SessionDescription, kind RTPCodecType, directi
 		}
 	}
 	return false
+}
+
+func untilConnectionState(state PeerConnectionState, peers ...*PeerConnection) *sync.WaitGroup {
+	var triggered sync.WaitGroup
+	triggered.Add(len(peers))
+
+	for _, p := range peers {
+		var done atomic.Value
+		done.Store(false)
+		hdlr := func(p PeerConnectionState) {
+			if val, ok := done.Load().(bool); ok && (!val && p == state) {
+				done.Store(true)
+				triggered.Done()
+			}
+		}
+
+		p.OnConnectionStateChange(hdlr)
+	}
+	return &triggered
 }
 
 func TestNew(t *testing.T) {
@@ -321,7 +350,7 @@ func TestCreateOfferAnswer(t *testing.T) {
 	// so CreateAnswer should return an InvalidStateError
 	assert.Equal(t, answerPeerConn.SignalingState(), SignalingStateStable)
 	_, err = answerPeerConn.CreateAnswer(nil)
-	assert.Error(t, err, &rtcerr.InvalidStateError{Err: ErrIncorrectSignalingState})
+	assert.Error(t, err)
 
 	closePairNow(t, offerPeerConn, answerPeerConn)
 }
@@ -462,6 +491,7 @@ t=0 0
 a=group:BUNDLE audio
 a=msid-semantic: WMS 2867270241552712
 m=video 0 UDP/TLS/RTP/SAVPF 0
+a=mid:video
 c=IN IP4 192.168.84.254
 a=inactive
 m=audio 9 UDP/TLS/RTP/SAVPF 111
@@ -709,4 +739,56 @@ func TestAddTransceiver(t *testing.T) {
 		assert.True(t, offerMediaHasDirection(offer, RTPCodecTypeVideo, testCase.direction))
 		assert.NoError(t, pc.Close())
 	}
+}
+
+// Assert that SCTPTransport -> DTLSTransport -> ICETransport works after connected
+func TestTransportChain(t *testing.T) {
+	offer, answer, err := newPair()
+	assert.NoError(t, err)
+
+	peerConnectionsConnected := untilConnectionState(PeerConnectionStateConnected, offer, answer)
+	assert.NoError(t, signalPair(offer, answer))
+	peerConnectionsConnected.Wait()
+
+	assert.NotNil(t, offer.SCTP().Transport().ICETransport())
+
+	closePairNow(t, offer, answer)
+}
+
+// Assert that the PeerConnection closes via DTLS (and not ICE)
+func TestDTLSClose(t *testing.T) {
+	lim := test.TimeOut(time.Second * 10)
+	defer lim.Stop()
+
+	report := test.CheckRoutines(t)
+	defer report()
+
+	pcOffer, pcAnswer, err := newPair()
+	assert.NoError(t, err)
+
+	_, err = pcOffer.AddTransceiverFromKind(RTPCodecTypeVideo)
+	assert.NoError(t, err)
+
+	peerConnectionsConnected := untilConnectionState(PeerConnectionStateConnected, pcOffer, pcAnswer)
+
+	offer, err := pcOffer.CreateOffer(nil)
+	assert.NoError(t, err)
+
+	offerGatheringComplete := GatheringCompletePromise(pcOffer)
+	assert.NoError(t, pcOffer.SetLocalDescription(offer))
+	<-offerGatheringComplete
+
+	assert.NoError(t, pcAnswer.SetRemoteDescription(*pcOffer.LocalDescription()))
+
+	answer, err := pcAnswer.CreateAnswer(nil)
+	assert.NoError(t, err)
+
+	answerGatheringComplete := GatheringCompletePromise(pcAnswer)
+	assert.NoError(t, pcAnswer.SetLocalDescription(answer))
+	<-answerGatheringComplete
+
+	assert.NoError(t, pcOffer.SetRemoteDescription(*pcAnswer.LocalDescription()))
+
+	peerConnectionsConnected.Wait()
+	assert.NoError(t, pcOffer.Close())
 }

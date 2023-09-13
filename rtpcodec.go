@@ -1,16 +1,23 @@
+// SPDX-FileCopyrightText: 2023 The Pion community <https://pion.ly>
+// SPDX-License-Identifier: MIT
+
 package webrtc
 
 import (
 	"strings"
+
+	"github.com/pion/webrtc/v4/internal/fmtp"
 )
 
 // RTPCodecType determines the type of a codec
 type RTPCodecType int
 
 const (
+	// RTPCodecTypeUnknown is the enum's zero-value
+	RTPCodecTypeUnknown RTPCodecType = iota
 
 	// RTPCodecTypeAudio indicates this is an audio codec
-	RTPCodecTypeAudio RTPCodecType = iota + 1
+	RTPCodecTypeAudio
 
 	// RTPCodecTypeVideo indicates this is a video codec
 	RTPCodecTypeVideo
@@ -19,7 +26,7 @@ const (
 func (t RTPCodecType) String() string {
 	switch t {
 	case RTPCodecTypeAudio:
-		return "audio"
+		return "audio" //nolint: goconst
 	case RTPCodecTypeVideo:
 		return "video" //nolint: goconst
 	default:
@@ -97,12 +104,12 @@ const (
 // Used for lookup up a codec in an existing list to find a match
 // Returns codecMatchExact, codecMatchPartial, or codecMatchNone
 func codecParametersFuzzySearch(needle RTPCodecParameters, haystack []RTPCodecParameters) (RTPCodecParameters, codecMatchType) {
-	needleFmtp := parseFmtp(needle.RTPCodecCapability.SDPFmtpLine)
+	needleFmtp := fmtp.Parse(needle.RTPCodecCapability.MimeType, needle.RTPCodecCapability.SDPFmtpLine)
 
 	// First attempt to match on MimeType + SDPFmtpLine
 	for _, c := range haystack {
-		if strings.EqualFold(c.RTPCodecCapability.MimeType, needle.RTPCodecCapability.MimeType) &&
-			fmtpConsist(needleFmtp, parseFmtp(c.RTPCodecCapability.SDPFmtpLine)) {
+		cfmtp := fmtp.Parse(c.RTPCodecCapability.MimeType, c.RTPCodecCapability.SDPFmtpLine)
+		if needleFmtp.Match(cfmtp) {
 			return c, codecMatchExact
 		}
 	}

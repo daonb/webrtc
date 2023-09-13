@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2023 The Pion community <https://pion.ly>
+// SPDX-License-Identifier: MIT
+
 // Package rtpdump implements the RTPDump file format documented at
 // https://www.cs.columbia.edu/irt/software/rtptools/
 package rtpdump
@@ -100,9 +103,7 @@ func (p Packet) Marshal() ([]byte, error) {
 		return nil, err
 	}
 
-	data := append(hdrData, p.Payload...)
-
-	return data, nil
+	return append(hdrData, p.Payload...), nil
 }
 
 // Unmarshal decodes the Packet from binary.

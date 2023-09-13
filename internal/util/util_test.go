@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2023 The Pion community <https://pion.ly>
+// SPDX-License-Identifier: MIT
+
 package util
 
 import (
@@ -38,7 +41,7 @@ func TestMultiError(t *testing.T) {
 		t.Errorf("String representation doesn't match, expected: %s, got: %s", errs.Error(), str)
 	}
 
-	errIs, ok := errs.(multiError)
+	errIs, ok := errs.(multiError) //nolint:errorlint
 	if !ok {
 		t.Fatal("FlattenErrs returns non-multiError")
 	}

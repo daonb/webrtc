@@ -1,6 +1,12 @@
+// SPDX-FileCopyrightText: 2023 The Pion community <https://pion.ly>
+// SPDX-License-Identifier: MIT
+
 package webrtc
 
-import "github.com/pion/rtp"
+import (
+	"github.com/pion/interceptor"
+	"github.com/pion/rtp"
+)
 
 // TrackLocalWriter is the Writer for outbound RTP Packets
 type TrackLocalWriter interface {
@@ -13,44 +19,74 @@ type TrackLocalWriter interface {
 
 // TrackLocalContext is the Context passed when a TrackLocal has been Binded/Unbinded from a PeerConnection, and used
 // in Interceptors.
-type TrackLocalContext struct {
-	id          string
-	params      RTPParameters
-	ssrc        SSRC
-	writeStream TrackLocalWriter
+type TrackLocalContext interface {
+	// CodecParameters returns the negotiated RTPCodecParameters. These are the codecs supported by both
+	// PeerConnections and the SSRC/PayloadTypes
+	CodecParameters() []RTPCodecParameters
+
+	// HeaderExtensions returns the negotiated RTPHeaderExtensionParameters. These are the header extensions supported by
+	// both PeerConnections and the SSRC/PayloadTypes
+	HeaderExtensions() []RTPHeaderExtensionParameter
+
+	// SSRC requires the negotiated SSRC of this track
+	// This track may have multiple if RTX is enabled
+	SSRC() SSRC
+
+	// WriteStream returns the WriteStream for this TrackLocal. The implementer writes the outbound
+	// media packets to it
+	WriteStream() TrackLocalWriter
+
+	// ID is a unique identifier that is used for both Bind/Unbind
+	ID() string
+
+	// RTCPReader returns the RTCP interceptor for this TrackLocal. Used to read RTCP of this TrackLocal.
+	RTCPReader() interceptor.RTCPReader
+}
+
+type baseTrackLocalContext struct {
+	id              string
+	params          RTPParameters
+	ssrc            SSRC
+	writeStream     TrackLocalWriter
+	rtcpInterceptor interceptor.RTCPReader
 }
 
 // CodecParameters returns the negotiated RTPCodecParameters. These are the codecs supported by both
 // PeerConnections and the SSRC/PayloadTypes
-func (t *TrackLocalContext) CodecParameters() []RTPCodecParameters {
+func (t *baseTrackLocalContext) CodecParameters() []RTPCodecParameters {
 	return t.params.Codecs
 }
 
 // HeaderExtensions returns the negotiated RTPHeaderExtensionParameters. These are the header extensions supported by
 // both PeerConnections and the SSRC/PayloadTypes
-func (t *TrackLocalContext) HeaderExtensions() []RTPHeaderExtensionParameter {
+func (t *baseTrackLocalContext) HeaderExtensions() []RTPHeaderExtensionParameter {
 	return t.params.HeaderExtensions
 }
 
 // SSRC requires the negotiated SSRC of this track
 // This track may have multiple if RTX is enabled
-func (t *TrackLocalContext) SSRC() SSRC {
+func (t *baseTrackLocalContext) SSRC() SSRC {
 	return t.ssrc
 }
 
 // WriteStream returns the WriteStream for this TrackLocal. The implementer writes the outbound
 // media packets to it
-func (t *TrackLocalContext) WriteStream() TrackLocalWriter {
+func (t *baseTrackLocalContext) WriteStream() TrackLocalWriter {
 	return t.writeStream
 }
 
 // ID is a unique identifier that is used for both Bind/Unbind
-func (t *TrackLocalContext) ID() string {
+func (t *baseTrackLocalContext) ID() string {
 	return t.id
 }
 
+// RTCPReader returns the RTCP interceptor for this TrackLocal. Used to read RTCP of this TrackLocal.
+func (t *baseTrackLocalContext) RTCPReader() interceptor.RTCPReader {
+	return t.rtcpInterceptor
+}
+
 // TrackLocal is an interface that controls how the user can send media
-// The user can provide their own TrackLocal implementatiosn, or use
+// The user can provide their own TrackLocal implementations, or use
 // the implementations in pkg/media
 type TrackLocal interface {
 	// Bind should implement the way how the media data flows from the Track to the PeerConnection
@@ -66,6 +102,9 @@ type TrackLocal interface {
 	// stream, but doesn't have to globally unique. A common example would be 'audio' or 'video'
 	// and StreamID would be 'desktop' or 'webcam'
 	ID() string
+
+	// RID is the RTP Stream ID for this track.
+	RID() string
 
 	// StreamID is the group this track belongs too. This must be unique
 	StreamID() string

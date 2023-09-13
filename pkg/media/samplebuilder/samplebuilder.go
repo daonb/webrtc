@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2023 The Pion community <https://pion.ly>
+// SPDX-License-Identifier: MIT
+
 // Package samplebuilder provides functionality to reconstruct media frames from RTP packets.
 package samplebuilder
 
@@ -6,7 +9,7 @@ import (
 	"time"
 
 	"github.com/pion/rtp"
-	"github.com/pion/webrtc/v3/pkg/media"
+	"github.com/pion/webrtc/v4/pkg/media"
 )
 
 // SampleBuilder buffers packets until media frames are complete.
@@ -21,9 +24,6 @@ type SampleBuilder struct {
 
 	// sampleRate allows us to compute duration of media.SamplecA
 	sampleRate uint32
-
-	// Interface that checks whether the packet is the first fragment of the frame or not
-	partitionHeadChecker rtp.PartitionHeadChecker
 
 	// the handler to be called when the builder is about to remove the
 	// reference to some packet.
@@ -40,6 +40,9 @@ type SampleBuilder struct {
 
 	// number of packets forced to be dropped
 	droppedPackets uint16
+
+	// allows inspecting head packets of each sample and then returns a custom metadata
+	packetHeadHandler func(headPacket interface{}) interface{}
 }
 
 // New constructs a new SampleBuilder.
@@ -203,8 +206,8 @@ func (s *SampleBuilder) buildSample(purgingBuffers bool) *media.Sample {
 
 	var consume sampleSequenceLocation
 
-	for i := s.active.head; s.buffer[i] != nil && i < s.active.tail; i++ {
-		if s.depacketizer.IsDetectedFinalPacketInSequence(s.buffer[i].Marker) {
+	for i := s.active.head; s.buffer[i] != nil && s.active.compare(i) != slCompareAfter; i++ {
+		if s.depacketizer.IsPartitionTail(s.buffer[i].Marker, s.buffer[i].Payload) {
 			consume.head = s.active.head
 			consume.tail = i + 1
 			break
@@ -244,22 +247,25 @@ func (s *SampleBuilder) buildSample(purgingBuffers bool) *media.Sample {
 
 	// prior to decoding all the packets, check if this packet
 	// would end being disposed anyway
-	if s.partitionHeadChecker != nil {
-		if !s.partitionHeadChecker.IsPartitionHead(s.buffer[consume.head].Payload) {
-			s.droppedPackets += consume.count()
-			s.purgeConsumedLocation(consume, true)
-			s.purgeConsumedBuffers()
-			return nil
-		}
+	if !s.depacketizer.IsPartitionHead(s.buffer[consume.head].Payload) {
+		s.droppedPackets += consume.count()
+		s.purgeConsumedLocation(consume, true)
+		s.purgeConsumedBuffers()
+		return nil
 	}
 
 	// merge all the buffers into a sample
 	data := []byte{}
+	var metadata interface{}
 	for i := consume.head; i != consume.tail; i++ {
 		p, err := s.depacketizer.Unmarshal(s.buffer[i].Payload)
 		if err != nil {
 			return nil
 		}
+		if i == consume.head && s.packetHeadHandler != nil {
+			metadata = s.packetHeadHandler(s.depacketizer)
+		}
+
 		data = append(data, p...)
 	}
 	samples := afterTimestamp - sampleTimestamp
@@ -269,6 +275,7 @@ func (s *SampleBuilder) buildSample(purgingBuffers bool) *media.Sample {
 		Duration:           time.Duration((float64(samples)/float64(s.sampleRate))*secondToNanoseconds) * time.Nanosecond,
 		PacketTimestamp:    sampleTimestamp,
 		PrevDroppedPackets: s.droppedPackets,
+		Metadata:           metadata,
 	}
 
 	s.droppedPackets = 0
@@ -300,6 +307,9 @@ func (s *SampleBuilder) Pop() *media.Sample {
 // no sample is compiled).
 func (s *SampleBuilder) PopWithTimestamp() (*media.Sample, uint32) {
 	sample := s.Pop()
+	if sample == nil {
+		return nil, 0
+	}
 	return sample, sample.PacketTimestamp
 }
 
@@ -326,11 +336,9 @@ func timestampDistance(x, y uint32) uint32 {
 // An Option configures a SampleBuilder.
 type Option func(o *SampleBuilder)
 
-// WithPartitionHeadChecker assigns a codec-specific PartitionHeadChecker to SampleBuilder.
-// Several PartitionHeadCheckers are available in package github.com/pion/rtp/codecs.
-func WithPartitionHeadChecker(checker rtp.PartitionHeadChecker) Option {
+// WithPartitionHeadChecker is obsolete, it does nothing.
+func WithPartitionHeadChecker(interface{}) Option {
 	return func(o *SampleBuilder) {
-		o.partitionHeadChecker = checker
 	}
 }
 
@@ -339,6 +347,14 @@ func WithPartitionHeadChecker(checker rtp.PartitionHeadChecker) Option {
 func WithPacketReleaseHandler(h func(*rtp.Packet)) Option {
 	return func(o *SampleBuilder) {
 		o.packetReleaseHandler = h
+	}
+}
+
+// WithPacketHeadHandler set a head packet handler to allow inspecting
+// the packet to extract certain information and return as custom metadata
+func WithPacketHeadHandler(h func(headPacket interface{}) interface{}) Option {
+	return func(o *SampleBuilder) {
+		o.packetHeadHandler = h
 	}
 }
 

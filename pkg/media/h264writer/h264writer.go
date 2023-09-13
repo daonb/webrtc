@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2023 The Pion community <https://pion.ly>
+// SPDX-License-Identifier: MIT
+
 // Package h264writer implements H264 media container writer
 package h264writer
 
@@ -26,7 +29,7 @@ type (
 
 // New builds a new H264 writer
 func New(filename string) (*H264Writer, error) {
-	f, err := os.Create(filename)
+	f, err := os.Create(filename) //nolint:gosec
 	if err != nil {
 		return nil, err
 	}
@@ -81,16 +84,25 @@ func (h *H264Writer) Close() error {
 }
 
 func isKeyFrame(data []byte) bool {
-	const typeSTAPA = 24
+	const (
+		typeSTAPA       = 24
+		typeSPS         = 7
+		naluTypeBitmask = 0x1F
+	)
 
 	var word uint32
 
 	payload := bytes.NewReader(data)
-	err := binary.Read(payload, binary.BigEndian, &word)
-
-	if err != nil || (word&0x1F000000)>>24 != typeSTAPA {
+	if err := binary.Read(payload, binary.BigEndian, &word); err != nil {
 		return false
 	}
 
-	return word&0x1F == 7
+	naluType := (word >> 24) & naluTypeBitmask
+	if naluType == typeSTAPA && word&naluTypeBitmask == typeSPS {
+		return true
+	} else if naluType == typeSPS {
+		return true
+	}
+
+	return false
 }

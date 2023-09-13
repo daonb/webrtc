@@ -1,13 +1,20 @@
+// SPDX-FileCopyrightText: 2023 The Pion community <https://pion.ly>
+// SPDX-License-Identifier: MIT
+
+//go:build !js
 // +build !js
 
+// rtp-to-webrtc demonstrates how to consume a RTP stream video UDP, and then send to a WebRTC client.
 package main
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"net"
 
-	"github.com/pion/webrtc/v3"
-	"github.com/pion/webrtc/v3/examples/internal/signal"
+	"github.com/pion/webrtc/v4"
+	"github.com/pion/webrtc/v4/examples/internal/signal"
 )
 
 func main() {
@@ -27,6 +34,15 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+
+	// Increase the UDP receive buffer size
+	// Default UDP buffer sizes vary on different operating systems
+	bufferSize := 300000 // 300KB
+	err = listener.SetReadBuffer(bufferSize)
+	if err != nil {
+		panic(err)
+	}
+
 	defer func() {
 		if err = listener.Close(); err != nil {
 			panic(err)
@@ -59,6 +75,12 @@ func main() {
 	// This will notify you when the peer has connected/disconnected
 	peerConnection.OnICEConnectionStateChange(func(connectionState webrtc.ICEConnectionState) {
 		fmt.Printf("Connection State has changed %s \n", connectionState.String())
+
+		if connectionState == webrtc.ICEConnectionStateFailed {
+			if closeErr := peerConnection.Close(); closeErr != nil {
+				panic(closeErr)
+			}
+		}
 	})
 
 	// Wait for the offer to be pasted
@@ -101,6 +123,11 @@ func main() {
 		}
 
 		if _, err = videoTrack.Write(inboundRTPPacket[:n]); err != nil {
+			if errors.Is(err, io.ErrClosedPipe) {
+				// The peerConnection has been closed.
+				return
+			}
+
 			panic(err)
 		}
 	}

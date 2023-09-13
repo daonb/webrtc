@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2023 The Pion community <https://pion.ly>
+// SPDX-License-Identifier: MIT
+
 package signal
 
 import (
@@ -21,6 +24,7 @@ func HTTPSDPServer() chan string {
 	})
 
 	go func() {
+		// nolint: gosec
 		err := http.ListenAndServe(":"+strconv.Itoa(*port), nil)
 		if err != nil {
 			panic(err)

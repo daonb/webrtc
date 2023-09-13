@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2023 The Pion community <https://pion.ly>
+// SPDX-License-Identifier: MIT
+
 package ivfwriter
 
 import (
@@ -20,7 +23,62 @@ type ivfWriterPacketTest struct {
 	closeErr     error
 }
 
-func TestIVFWriter_AddPacketAndClose(t *testing.T) {
+func TestIVFWriter_Basic(t *testing.T) {
+	assert := assert.New(t)
+	addPacketTestCase := []ivfWriterPacketTest{
+		{
+			buffer:       &bytes.Buffer{},
+			message:      "IVFWriter shouldn't be able to write something to a closed file",
+			messageClose: "IVFWriter should be able to close an already closed file",
+			packet:       nil,
+			err:          errFileNotOpened,
+			closeErr:     nil,
+		},
+		{
+			buffer:       &bytes.Buffer{},
+			message:      "IVFWriter shouldn't be able to write something an empty packet",
+			messageClose: "IVFWriter should be able to close the file",
+			packet:       &rtp.Packet{},
+			err:          errInvalidNilPacket,
+			closeErr:     nil,
+		},
+		{
+			buffer:       nil,
+			message:      "IVFWriter shouldn't be able to write something to a closed file",
+			messageClose: "IVFWriter should be able to close an already closed file",
+			packet:       nil,
+			err:          errFileNotOpened,
+			closeErr:     nil,
+		},
+	}
+
+	// First test case has a 'nil' file descriptor
+	writer, err := NewWith(addPacketTestCase[0].buffer)
+	assert.Nil(err, "IVFWriter should be created")
+	assert.NotNil(writer, "Writer shouldn't be nil")
+	assert.False(writer.seenKeyFrame, "Writer's seenKeyFrame should initialize false")
+	assert.Equal(uint64(0), writer.count, "Writer's packet count should initialize 0")
+	err = writer.Close()
+	assert.Nil(err, "IVFWriter should be able to close the stream")
+	writer.ioWriter = nil
+	addPacketTestCase[0].writer = writer
+
+	// Second test tries to write an empty packet
+	writer, err = NewWith(addPacketTestCase[1].buffer)
+	assert.Nil(err, "IVFWriter should be created")
+	assert.NotNil(writer, "Writer shouldn't be nil")
+	assert.False(writer.seenKeyFrame, "Writer's seenKeyFrame should initialize false")
+	assert.Equal(uint64(0), writer.count, "Writer's packet count should initialize 0")
+	addPacketTestCase[1].writer = writer
+
+	// Fourth test tries to write to a nil stream
+	writer, err = NewWith(addPacketTestCase[2].buffer)
+	assert.NotNil(err, "IVFWriter shouldn't be created")
+	assert.Nil(writer, "Writer should be nil")
+	addPacketTestCase[2].writer = writer
+}
+
+func TestIVFWriter_VP8(t *testing.T) {
 	// Construct valid packet
 	rawValidPkt := []byte{
 		0x90, 0xe0, 0x69, 0x8f, 0xd9, 0xc2, 0x93, 0xda, 0x1c, 0x64,
@@ -33,7 +91,6 @@ func TestIVFWriter_AddPacketAndClose(t *testing.T) {
 			Extension:        true,
 			ExtensionProfile: 1,
 			Version:          2,
-			PayloadOffset:    20,
 			PayloadType:      96,
 			SequenceNumber:   27023,
 			Timestamp:        3653407706,
@@ -41,7 +98,6 @@ func TestIVFWriter_AddPacketAndClose(t *testing.T) {
 			CSRC:             []uint32{},
 		},
 		Payload: rawValidPkt[20:],
-		Raw:     rawValidPkt,
 	}
 	assert.NoError(t, validPacket.SetExtension(0, []byte{0xFF, 0xFF, 0xFF, 0xFF}))
 
@@ -57,7 +113,6 @@ func TestIVFWriter_AddPacketAndClose(t *testing.T) {
 			Extension:        true,
 			ExtensionProfile: 1,
 			Version:          2,
-			PayloadOffset:    20,
 			PayloadType:      96,
 			SequenceNumber:   27023,
 			Timestamp:        3653407706,
@@ -65,7 +120,6 @@ func TestIVFWriter_AddPacketAndClose(t *testing.T) {
 			CSRC:             []uint32{},
 		},
 		Payload: rawMidPartPkt[20:],
-		Raw:     rawMidPartPkt,
 	}
 	assert.NoError(t, midPartPacket.SetExtension(0, []byte{0xFF, 0xFF, 0xFF, 0xFF}))
 
@@ -81,7 +135,6 @@ func TestIVFWriter_AddPacketAndClose(t *testing.T) {
 			Extension:        true,
 			ExtensionProfile: 1,
 			Version:          2,
-			PayloadOffset:    20,
 			PayloadType:      96,
 			SequenceNumber:   27023,
 			Timestamp:        3653407706,
@@ -89,7 +142,6 @@ func TestIVFWriter_AddPacketAndClose(t *testing.T) {
 			CSRC:             []uint32{},
 		},
 		Payload: rawKeyframePkt[20:],
-		Raw:     rawKeyframePkt,
 	}
 	assert.NoError(t, keyframePacket.SetExtension(0, []byte{0xFF, 0xFF, 0xFF, 0xFF}))
 
@@ -121,34 +173,10 @@ func TestIVFWriter_AddPacketAndClose(t *testing.T) {
 	addPacketTestCase := []ivfWriterPacketTest{
 		{
 			buffer:       &bytes.Buffer{},
-			message:      "IVFWriter shouldn't be able to write something to a closed file",
-			messageClose: "IVFWriter should be able to close an already closed file",
-			packet:       nil,
-			err:          errFileNotOpened,
-			closeErr:     nil,
-		},
-		{
-			buffer:       &bytes.Buffer{},
-			message:      "IVFWriter shouldn't be able to write something an empty packet",
-			messageClose: "IVFWriter should be able to close the file",
-			packet:       &rtp.Packet{},
-			err:          errInvalidNilPacket,
-			closeErr:     nil,
-		},
-		{
-			buffer:       &bytes.Buffer{},
 			message:      "IVFWriter should be able to write an IVF packet",
 			messageClose: "IVFWriter should be able to close the file",
 			packet:       validPacket,
 			err:          nil,
-			closeErr:     nil,
-		},
-		{
-			buffer:       nil,
-			message:      "IVFWriter shouldn't be able to write something to a closed file",
-			messageClose: "IVFWriter should be able to close an already closed file",
-			packet:       nil,
-			err:          errFileNotOpened,
 			closeErr:     nil,
 		},
 		{
@@ -161,46 +189,21 @@ func TestIVFWriter_AddPacketAndClose(t *testing.T) {
 		},
 	}
 
-	// First test case has a 'nil' file descriptor
-	writer, err := NewWith(addPacketTestCase[0].buffer)
+	// first test tries to write a valid VP8 packet
+	writer, err := NewWith(addPacketTestCase[0].buffer, WithCodec(mimeTypeVP8))
 	assert.Nil(err, "IVFWriter should be created")
 	assert.NotNil(writer, "Writer shouldn't be nil")
 	assert.False(writer.seenKeyFrame, "Writer's seenKeyFrame should initialize false")
 	assert.Equal(uint64(0), writer.count, "Writer's packet count should initialize 0")
-	err = writer.Close()
-	assert.Nil(err, "IVFWriter should be able to close the stream")
-	writer.ioWriter = nil
 	addPacketTestCase[0].writer = writer
 
-	// Second test tries to write an empty packet
+	// second test tries to write a keyframe packet
 	writer, err = NewWith(addPacketTestCase[1].buffer)
 	assert.Nil(err, "IVFWriter should be created")
 	assert.NotNil(writer, "Writer shouldn't be nil")
 	assert.False(writer.seenKeyFrame, "Writer's seenKeyFrame should initialize false")
 	assert.Equal(uint64(0), writer.count, "Writer's packet count should initialize 0")
 	addPacketTestCase[1].writer = writer
-
-	// Third test tries to write a valid VP8 packet
-	writer, err = NewWith(addPacketTestCase[2].buffer)
-	assert.Nil(err, "IVFWriter should be created")
-	assert.NotNil(writer, "Writer shouldn't be nil")
-	assert.False(writer.seenKeyFrame, "Writer's seenKeyFrame should initialize false")
-	assert.Equal(uint64(0), writer.count, "Writer's packet count should initialize 0")
-	addPacketTestCase[2].writer = writer
-
-	// Fourth test tries to write to a nil stream
-	writer, err = NewWith(addPacketTestCase[3].buffer)
-	assert.NotNil(err, "IVFWriter shouldn't be created")
-	assert.Nil(writer, "Writer should be nil")
-	addPacketTestCase[3].writer = writer
-
-	// Fifth test tries to write a keyframe packet
-	writer, err = NewWith(addPacketTestCase[4].buffer)
-	assert.Nil(err, "IVFWriter should be created")
-	assert.NotNil(writer, "Writer shouldn't be nil")
-	assert.False(writer.seenKeyFrame, "Writer's seenKeyFrame should initialize false")
-	assert.Equal(uint64(0), writer.count, "Writer's packet count should initialize 0")
-	addPacketTestCase[4].writer = writer
 
 	for _, t := range addPacketTestCase {
 		if t.writer != nil {
@@ -210,18 +213,18 @@ func TestIVFWriter_AddPacketAndClose(t *testing.T) {
 	}
 
 	// Third test tries to write a valid VP8 packet - No Keyframe
-	assert.False(addPacketTestCase[2].writer.seenKeyFrame, "Writer's seenKeyFrame should remain false")
-	assert.Equal(uint64(0), addPacketTestCase[2].writer.count, "Writer's packet count should remain 0")
-	assert.Equal(nil, addPacketTestCase[2].writer.WriteRTP(midPartPacket), "Write packet failed") // add a mid partition packet
-	assert.Equal(uint64(0), addPacketTestCase[2].writer.count, "Writer's packet count should remain 0")
+	assert.False(addPacketTestCase[0].writer.seenKeyFrame, "Writer's seenKeyFrame should remain false")
+	assert.Equal(uint64(0), addPacketTestCase[0].writer.count, "Writer's packet count should remain 0")
+	assert.Equal(nil, addPacketTestCase[0].writer.WriteRTP(midPartPacket), "Write packet failed") // add a mid partition packet
+	assert.Equal(uint64(0), addPacketTestCase[0].writer.count, "Writer's packet count should remain 0")
 
 	// Fifth test tries to write a keyframe packet
-	assert.True(addPacketTestCase[4].writer.seenKeyFrame, "Writer's seenKeyFrame should now be true")
-	assert.Equal(uint64(1), addPacketTestCase[4].writer.count, "Writer's packet count should now be 1")
-	assert.Equal(nil, addPacketTestCase[4].writer.WriteRTP(midPartPacket), "Write packet failed") // add a mid partition packet
-	assert.Equal(uint64(1), addPacketTestCase[4].writer.count, "Writer's packet count should remain 1")
-	assert.Equal(nil, addPacketTestCase[4].writer.WriteRTP(validPacket), "Write packet failed") // add a valid packet
-	assert.Equal(uint64(2), addPacketTestCase[4].writer.count, "Writer's packet count should now be 2")
+	assert.True(addPacketTestCase[1].writer.seenKeyFrame, "Writer's seenKeyFrame should now be true")
+	assert.Equal(uint64(1), addPacketTestCase[1].writer.count, "Writer's packet count should now be 1")
+	assert.Equal(nil, addPacketTestCase[1].writer.WriteRTP(midPartPacket), "Write packet failed") // add a mid partition packet
+	assert.Equal(uint64(1), addPacketTestCase[1].writer.count, "Writer's packet count should remain 1")
+	assert.Equal(nil, addPacketTestCase[1].writer.WriteRTP(validPacket), "Write packet failed") // add a valid packet
+	assert.Equal(uint64(2), addPacketTestCase[1].writer.count, "Writer's packet count should now be 2")
 
 	for _, t := range addPacketTestCase {
 		if t.writer != nil {
@@ -229,4 +232,70 @@ func TestIVFWriter_AddPacketAndClose(t *testing.T) {
 			assert.Equal(res, t.closeErr, t.messageClose)
 		}
 	}
+}
+
+func TestIVFWriter_EmptyPayload(t *testing.T) {
+	buffer := &bytes.Buffer{}
+
+	writer, err := NewWith(buffer)
+	assert.NoError(t, err)
+
+	assert.NoError(t, writer.WriteRTP(&rtp.Packet{Payload: []byte{}}))
+}
+
+func TestIVFWriter_Errors(t *testing.T) {
+	// Creating a Writer with AV1 and VP8
+	_, err := NewWith(&bytes.Buffer{}, WithCodec(mimeTypeAV1), WithCodec(mimeTypeAV1))
+	assert.ErrorIs(t, err, errCodecAlreadySet)
+
+	// Creating a Writer with Invalid Codec
+	_, err = NewWith(&bytes.Buffer{}, WithCodec(""))
+	assert.ErrorIs(t, err, errNoSuchCodec)
+}
+
+func TestIVFWriter_AV1(t *testing.T) {
+	t.Run("Unfragmented", func(t *testing.T) {
+		buffer := &bytes.Buffer{}
+
+		writer, err := NewWith(buffer, WithCodec(mimeTypeAV1))
+		assert.NoError(t, err)
+
+		assert.NoError(t, writer.WriteRTP(&rtp.Packet{Payload: []byte{0x00, 0x01, 0xFF}}))
+		assert.NoError(t, writer.Close())
+		assert.Equal(t, buffer.Bytes(), []byte{
+			0x44, 0x4b, 0x49, 0x46, 0x0, 0x0, 0x20,
+			0x0, 0x41, 0x56, 0x30, 0x31, 0x80, 0x2,
+			0xe0, 0x1, 0x1e, 0x0, 0x0, 0x0, 0x1, 0x0,
+			0x0, 0x0, 0x84, 0x3, 0x0, 0x0, 0x0, 0x0,
+			0x0, 0x0, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
+			0x0, 0x0, 0x0, 0x0, 0x0, 0xff,
+		})
+	})
+
+	t.Run("Fragmented", func(t *testing.T) {
+		buffer := &bytes.Buffer{}
+
+		writer, err := NewWith(buffer, WithCodec(mimeTypeAV1))
+		assert.NoError(t, err)
+
+		for _, p := range [][]byte{{0x40, 0x02, 0x00, 0x01}, {0xc0, 0x02, 0x02, 0x03}, {0xc0, 0x02, 0x04, 0x04}} {
+			assert.NoError(t, writer.WriteRTP(&rtp.Packet{Payload: p}))
+			assert.Equal(t, buffer.Bytes(), []byte{
+				0x44, 0x4b, 0x49, 0x46, 0x0,
+				0x0, 0x20, 0x0, 0x41, 0x56, 0x30,
+				0x31, 0x80, 0x2, 0xe0, 0x1, 0x1e,
+				0x0, 0x0, 0x0, 0x1, 0x0, 0x0,
+				0x0, 0x84, 0x3, 0x0, 0x0, 0x0, 0x0,
+				0x0, 0x0,
+			})
+		}
+		assert.NoError(t, writer.WriteRTP(&rtp.Packet{Payload: []byte{0x80, 0x01, 0x05}}))
+		assert.Equal(t, buffer.Bytes(), []byte{
+			0x44, 0x4b, 0x49, 0x46, 0x0, 0x0, 0x20, 0x0, 0x41, 0x56, 0x30, 0x31, 0x80,
+			0x2, 0xe0, 0x1, 0x1e, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0, 0x84, 0x3, 0x0, 0x0,
+			0x0, 0x0, 0x0, 0x0, 0x7, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
+			0x0, 0x1, 0x2, 0x3, 0x4, 0x4, 0x5,
+		})
+		assert.NoError(t, writer.Close())
+	})
 }

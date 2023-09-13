@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2023 The Pion community <https://pion.ly>
+// SPDX-License-Identifier: MIT
+
+//go:build !js
 // +build !js
 
 package webrtc
@@ -10,7 +14,6 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/pem"
 	"fmt"
 	"math/big"
@@ -18,7 +21,7 @@ import (
 	"time"
 
 	"github.com/pion/dtls/v2/pkg/crypto/fingerprint"
-	"github.com/pion/webrtc/v3/pkg/rtcerr"
+	"github.com/pion/webrtc/v4/pkg/rtcerr"
 )
 
 // Certificate represents a x509Cert used to authenticate WebRTC communications.
@@ -105,10 +108,12 @@ func (c Certificate) GetFingerprints() ([]DTLSFingerprint, error) {
 	for _, algo := range fingerprintAlgorithms {
 		name, err := fingerprint.StringFromHash(algo)
 		if err != nil {
+			// nolint
 			return nil, fmt.Errorf("%w: %v", ErrFailedToGenerateCertificateFingerprint, err)
 		}
 		value, err := fingerprint.Fingerprint(c.x509Cert, algo)
 		if err != nil {
+			// nolint
 			return nil, fmt.Errorf("%w: %v", ErrFailedToGenerateCertificateFingerprint, err)
 		}
 		res[i] = DTLSFingerprint{
@@ -123,12 +128,6 @@ func (c Certificate) GetFingerprints() ([]DTLSFingerprint, error) {
 // GenerateCertificate causes the creation of an X.509 certificate and
 // corresponding private key.
 func GenerateCertificate(secretKey crypto.PrivateKey) (*Certificate, error) {
-	origin := make([]byte, 16)
-	/* #nosec */
-	if _, err := rand.Read(origin); err != nil {
-		return nil, &rtcerr.UnknownError{Err: err}
-	}
-
 	// Max random value, a 130-bits integer, i.e 2^130 - 1
 	maxBigInt := new(big.Int)
 	/* #nosec */
@@ -140,18 +139,12 @@ func GenerateCertificate(secretKey crypto.PrivateKey) (*Certificate, error) {
 	}
 
 	return NewCertificate(secretKey, x509.Certificate{
-		ExtKeyUsage: []x509.ExtKeyUsage{
-			x509.ExtKeyUsageClientAuth,
-			x509.ExtKeyUsageServerAuth,
-		},
-		BasicConstraintsValid: true,
-		NotBefore:             time.Now(),
-		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
-		NotAfter:              time.Now().AddDate(0, 1, 0),
-		SerialNumber:          serialNumber,
-		Version:               2,
-		Subject:               pkix.Name{CommonName: hex.EncodeToString(origin)},
-		IsCA:                  true,
+		Issuer:       pkix.Name{CommonName: generatedCertificateOrigin},
+		NotBefore:    time.Now().AddDate(0, 0, -1),
+		NotAfter:     time.Now().AddDate(0, 1, -1),
+		SerialNumber: serialNumber,
+		Version:      2,
+		Subject:      pkix.Name{CommonName: generatedCertificateOrigin},
 	})
 }
 

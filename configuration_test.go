@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2023 The Pion community <https://pion.ly>
+// SPDX-License-Identifier: MIT
+
 package webrtc
 
 import (
@@ -41,7 +44,7 @@ func TestConfiguration_getICEServers(t *testing.T) {
 
 func TestConfigurationJSON(t *testing.T) {
 	j := `{
-    "iceServers": [{"URLs": ["turn:turn.example.org"],
+    "iceServers": [{"urls": ["turn:turn.example.org"],
                     "username": "jch",
                     "credential": "topsecret"
                   }],

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2023 The Pion community <https://pion.ly>
+// SPDX-License-Identifier: MIT
+
+// pion-to-pion is an example of two pion instances communicating directly!
 package main
 
 import (
@@ -7,11 +11,12 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net/http"
+	"os"
 	"sync"
 	"time"
 
-	"github.com/pion/webrtc/v3"
-	"github.com/pion/webrtc/v3/examples/internal/signal"
+	"github.com/pion/webrtc/v4"
+	"github.com/pion/webrtc/v4/examples/internal/signal"
 )
 
 func signalCandidate(addr string, c *webrtc.ICECandidate) error {
@@ -21,11 +26,7 @@ func signalCandidate(addr string, c *webrtc.ICECandidate) error {
 		return err
 	}
 
-	if closeErr := resp.Body.Close(); closeErr != nil {
-		return closeErr
-	}
-
-	return nil
+	return resp.Body.Close()
 }
 
 func main() { //nolint:gocognit
@@ -52,6 +53,11 @@ func main() { //nolint:gocognit
 	if err != nil {
 		panic(err)
 	}
+	defer func() {
+		if cErr := peerConnection.Close(); cErr != nil {
+			fmt.Printf("cannot close peerConnection: %v\n", cErr)
+		}
+	}()
 
 	// When an ICE candidate is available send to the other Pion instance
 	// the other Pion instance will add this candidate by calling AddICECandidate
@@ -105,6 +111,7 @@ func main() { //nolint:gocognit
 		}
 	})
 	// Start HTTP server that accepts requests from the answer process
+	// nolint: gosec
 	go func() { panic(http.ListenAndServe(*offerAddr, nil)) }()
 
 	// Create a datachannel with label 'data'
@@ -113,10 +120,24 @@ func main() { //nolint:gocognit
 		panic(err)
 	}
 
-	// Set the handler for ICE connection state
+	// Set the handler for Peer connection state
 	// This will notify you when the peer has connected/disconnected
-	peerConnection.OnICEConnectionStateChange(func(connectionState webrtc.ICEConnectionState) {
-		fmt.Printf("ICE Connection State has changed: %s\n", connectionState.String())
+	peerConnection.OnConnectionStateChange(func(s webrtc.PeerConnectionState) {
+		fmt.Printf("Peer Connection State has changed: %s\n", s.String())
+
+		if s == webrtc.PeerConnectionStateFailed {
+			// Wait until PeerConnection has had no network activity for 30 seconds or another failure. It may be reconnected using an ICE Restart.
+			// Use webrtc.PeerConnectionStateDisconnected if you are interested in detecting faster timeout.
+			// Note that the PeerConnection may come back from PeerConnectionStateDisconnected.
+			fmt.Println("Peer Connection has gone to failed exiting")
+			os.Exit(0)
+		}
+
+		if s == webrtc.PeerConnectionStateClosed {
+			// PeerConnection was explicitly closed. This usually happens from a DTLS CloseNotify
+			fmt.Println("Peer Connection has gone to closed exiting")
+			os.Exit(0)
+		}
 	})
 
 	// Register channel opening handling

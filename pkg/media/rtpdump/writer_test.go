@@ -1,7 +1,11 @@
+// SPDX-FileCopyrightText: 2023 The Pion community <https://pion.ly>
+// SPDX-License-Identifier: MIT
+
 package rtpdump
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"net"
 	"reflect"
@@ -91,7 +95,7 @@ func TestRoundTrip(t *testing.T) {
 	var packets2 []Packet
 	for {
 		pkt, err := reader.Next()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {

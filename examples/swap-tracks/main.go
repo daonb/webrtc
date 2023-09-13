@@ -1,8 +1,14 @@
+// SPDX-FileCopyrightText: 2023 The Pion community <https://pion.ly>
+// SPDX-License-Identifier: MIT
+
+//go:build !js
 // +build !js
 
+// swap-tracks demonstrates how to swap multiple incoming tracks on a single outgoing track.
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -10,8 +16,8 @@ import (
 
 	"github.com/pion/rtcp"
 	"github.com/pion/rtp"
-	"github.com/pion/webrtc/v3"
-	"github.com/pion/webrtc/v3/examples/internal/signal"
+	"github.com/pion/webrtc/v4"
+	"github.com/pion/webrtc/v4/examples/internal/signal"
 )
 
 func main() { // nolint:gocognit
@@ -30,9 +36,14 @@ func main() { // nolint:gocognit
 	if err != nil {
 		panic(err)
 	}
+	defer func() {
+		if cErr := peerConnection.Close(); cErr != nil {
+			fmt.Printf("cannot close peerConnection: %v\n", cErr)
+		}
+	}()
 
 	// Create Track that we send video back to browser on
-	outputTrack, err := webrtc.NewTrackLocalStaticRTP(webrtc.RTPCodecCapability{MimeType: "video/vp8"}, "video", "pion")
+	outputTrack, err := webrtc.NewTrackLocalStaticRTP(webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeVP8}, "video", "pion")
 	if err != nil {
 		panic(err)
 	}
@@ -114,9 +125,25 @@ func main() { // nolint:gocognit
 			}
 		}
 	})
-	// Set the handler for ICE connection state and update chan if connected
-	peerConnection.OnICEConnectionStateChange(func(connectionState webrtc.ICEConnectionState) {
-		fmt.Printf("Connection State has changed %s \n", connectionState.String())
+
+	ctx, done := context.WithCancel(context.Background())
+
+	// Set the handler for Peer connection state
+	// This will notify you when the peer has connected/disconnected
+	peerConnection.OnConnectionStateChange(func(s webrtc.PeerConnectionState) {
+		fmt.Printf("Peer Connection State has changed: %s\n", s.String())
+
+		if s == webrtc.PeerConnectionStateFailed {
+			// Wait until PeerConnection has had no network activity for 30 seconds or another failure. It may be reconnected using an ICE Restart.
+			// Use webrtc.PeerConnectionStateDisconnected if you are interested in detecting faster timeout.
+			// Note that the PeerConnection may come back from PeerConnectionStateDisconnected.
+			done()
+		}
+
+		if s == webrtc.PeerConnectionStateClosed {
+			// PeerConnection was explicitly closed. This usually happens from a DTLS CloseNotify
+			done()
+		}
 	})
 
 	// Create an answer
@@ -153,7 +180,12 @@ func main() { // nolint:gocognit
 			// Keep an increasing sequence number
 			packet.SequenceNumber = i
 			// Write out the packet, ignoring closed pipe if nobody is listening
-			if err := outputTrack.WriteRTP(packet); err != nil && !errors.Is(err, io.ErrClosedPipe) {
+			if err := outputTrack.WriteRTP(packet); err != nil {
+				if errors.Is(err, io.ErrClosedPipe) {
+					// The peerConnection has been closed.
+					return
+				}
+
 				panic(err)
 			}
 		}
@@ -162,6 +194,12 @@ func main() { // nolint:gocognit
 	// Wait for connection, then rotate the track every 5s
 	fmt.Printf("Waiting for connection\n")
 	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
 		// We haven't gotten any tracks yet
 		if trackCount == 0 {
 			continue
