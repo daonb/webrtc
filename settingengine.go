@@ -75,6 +75,7 @@ type SettingEngine struct {
 	}
 	sctp struct {
 		maxReceiveBufferSize uint32
+		rtoMax               time.Duration
 	}
 	sdpMediaLevelFingerprints                 bool
 	answeringDTLSRole                         DTLSRole
@@ -436,4 +437,10 @@ func (e *SettingEngine) SetSCTPMaxReceiveBufferSize(maxReceiveBufferSize uint32)
 // This allow usage of Ciphers that are reserved for private usage.
 func (e *SettingEngine) SetDTLSCustomerCipherSuites(customCipherSuites func() []dtls.CipherSuite) {
 	e.dtls.customCipherSuites = customCipherSuites
+}
+
+// SetSCTPRTOMax sets the maximum retransmission timeout.
+// Leave this 0 for the default timeout.
+func (e *SettingEngine) SetSCTPRTOMax(rtoMax time.Duration) {
+	e.sctp.rtoMax = rtoMax
 }
