@@ -1587,12 +1587,11 @@ func (pc *PeerConnection) handleIncomingSSRC(rtpStream io.Reader, ssrc SSRC) err
 		return err
 	}
 
-	var mid, rid, rsid string
-	payloadType, err := handleUnknownRTPPacket(b[:i], uint8(midExtensionID), uint8(streamIDExtensionID), uint8(repairStreamIDExtensionID), &mid, &rid, &rsid)
-	if err != nil {
-		return err
+	if i < 4 {
+		return errRTPTooShort
 	}
 
+	payloadType := PayloadType(b[1] & 0x7f)
 	params, err := pc.api.mediaEngine.getRTPParametersByPayloadType(payloadType)
 	if err != nil {
 		return err
@@ -1604,14 +1603,21 @@ func (pc *PeerConnection) handleIncomingSSRC(rtpStream io.Reader, ssrc SSRC) err
 		return err
 	}
 
+	var mid, rid, rsid string
+	var paddingOnly bool
 	for readCount := 0; readCount <= simulcastProbeCount; readCount++ {
 		if mid == "" || (rid == "" && rsid == "") {
+			// skip padding only packets for probing
+			if paddingOnly {
+				readCount--
+			}
+
 			i, _, err := interceptor.Read(b, nil)
 			if err != nil {
 				return err
 			}
 
-			if _, err = handleUnknownRTPPacket(b[:i], uint8(midExtensionID), uint8(streamIDExtensionID), uint8(repairStreamIDExtensionID), &mid, &rid, &rsid); err != nil {
+			if _, paddingOnly, err = handleUnknownRTPPacket(b[:i], uint8(midExtensionID), uint8(streamIDExtensionID), uint8(repairStreamIDExtensionID), &mid, &rid, &rsid); err != nil {
 				return err
 			}
 
@@ -1671,17 +1677,17 @@ func (pc *PeerConnection) undeclaredRTPMediaProcessor() {
 			continue
 		}
 
+		pc.dtlsTransport.storeSimulcastStream(stream)
+
 		if atomic.AddUint64(&simulcastRoutineCount, 1) >= simulcastMaxProbeRoutines {
 			atomic.AddUint64(&simulcastRoutineCount, ^uint64(0))
 			pc.log.Warn(ErrSimulcastProbeOverflow.Error())
-			pc.dtlsTransport.storeSimulcastStream(stream)
 			continue
 		}
 
 		go func(rtpStream io.Reader, ssrc SSRC) {
 			if err := pc.handleIncomingSSRC(rtpStream, ssrc); err != nil {
 				pc.log.Errorf(incomingUnhandledRTPSsrc, ssrc, err)
-				pc.dtlsTransport.storeSimulcastStream(stream)
 			}
 			atomic.AddUint64(&simulcastRoutineCount, ^uint64(0))
 		}(stream, SSRC(ssrc))
@@ -1865,7 +1871,7 @@ func (pc *PeerConnection) RemoveTrack(sender *RTPSender) (err error) {
 	return
 }
 
-func (pc *PeerConnection) newTransceiverFromTrack(direction RTPTransceiverDirection, track TrackLocal) (t *RTPTransceiver, err error) {
+func (pc *PeerConnection) newTransceiverFromTrack(direction RTPTransceiverDirection, track TrackLocal, init ...RTPTransceiverInit) (t *RTPTransceiver, err error) {
 	var (
 		r *RTPReceiver
 		s *RTPSender
@@ -1885,6 +1891,13 @@ func (pc *PeerConnection) newTransceiverFromTrack(direction RTPTransceiverDirect
 	if err != nil {
 		return
 	}
+
+	// Allow RTPTransceiverInit to override SSRC
+	if s != nil && len(s.trackEncodings) == 1 &&
+		len(init) == 1 && len(init[0].SendEncodings) == 1 && init[0].SendEncodings[0].SSRC != 0 {
+		s.trackEncodings[0].ssrc = init[0].SendEncodings[0].SSRC
+	}
+
 	return newRTPTransceiver(r, s, direction, track.Kind(), pc.api), nil
 }
 
@@ -1910,7 +1923,7 @@ func (pc *PeerConnection) AddTransceiverFromKind(kind RTPCodecType, init ...RTPT
 		if err != nil {
 			return nil, err
 		}
-		t, err = pc.newTransceiverFromTrack(direction, track)
+		t, err = pc.newTransceiverFromTrack(direction, track, init...)
 		if err != nil {
 			return nil, err
 		}
@@ -1942,7 +1955,7 @@ func (pc *PeerConnection) AddTransceiverFromTrack(track TrackLocal, init ...RTPT
 		direction = init[0].Direction
 	}
 
-	t, err = pc.newTransceiverFromTrack(direction, track)
+	t, err = pc.newTransceiverFromTrack(direction, track, init...)
 	if err == nil {
 		pc.mu.Lock()
 		pc.addRTPTransceiver(t)

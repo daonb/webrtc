@@ -111,6 +111,9 @@ func (r *RTPSender) Transport() *DTLSTransport {
 }
 
 func (r *RTPSender) getParameters() RTPSendParameters {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
 	var encodings []RTPEncodingParameters
 	for _, trackEncoding := range r.trackEncodings {
 		var rid string
@@ -196,19 +199,10 @@ func (r *RTPSender) AddEncoding(track TrackLocal) error {
 }
 
 func (r *RTPSender) addEncoding(track TrackLocal) {
-	ssrc := SSRC(randutil.NewMathRandomGenerator().Uint32())
 	trackEncoding := &trackEncoding{
-		track:      track,
-		srtpStream: &srtpWriterFuture{ssrc: ssrc},
-		ssrc:       ssrc,
+		track: track,
+		ssrc:  SSRC(randutil.NewMathRandomGenerator().Uint32()),
 	}
-	trackEncoding.srtpStream.rtpSender = r
-	trackEncoding.rtcpInterceptor = r.api.interceptor.BindRTCPReader(
-		interceptor.RTPReaderFunc(func(in []byte, a interceptor.Attributes) (n int, attributes interceptor.Attributes, err error) {
-			n, err = trackEncoding.srtpStream.Read(in)
-			return n, a, err
-		}),
-	)
 
 	r.trackEncodings = append(r.trackEncodings, trackEncoding)
 }
@@ -243,21 +237,26 @@ func (r *RTPSender) ReplaceTrack(track TrackLocal) error {
 
 	var replacedTrack TrackLocal
 	var context *baseTrackLocalContext
-	if len(r.trackEncodings) != 0 {
-		replacedTrack = r.trackEncodings[0].track
-		context = r.trackEncodings[0].context
-	}
-	if r.hasSent() && replacedTrack != nil {
-		if err := replacedTrack.Unbind(context); err != nil {
-			return err
+	for _, e := range r.trackEncodings {
+		replacedTrack = e.track
+		context = e.context
+
+		if r.hasSent() && replacedTrack != nil {
+			if err := replacedTrack.Unbind(context); err != nil {
+				return err
+			}
+		}
+
+		if !r.hasSent() || track == nil {
+			e.track = track
 		}
 	}
 
 	if !r.hasSent() || track == nil {
-		r.trackEncodings[0].track = track
 		return nil
 	}
 
+	// If we reach this point in the routine, there is only 1 track encoding
 	codec, err := track.Bind(&baseTrackLocalContext{
 		id:              context.ID(),
 		params:          r.api.mediaEngine.getRTPParametersByKind(track.Kind(), []RTPTransceiverDirection{RTPTransceiverDirectionSendonly}),
@@ -280,6 +279,7 @@ func (r *RTPSender) ReplaceTrack(track TrackLocal) error {
 	}
 
 	r.trackEncodings[0].track = track
+
 	return nil
 }
 
@@ -295,8 +295,13 @@ func (r *RTPSender) Send(parameters RTPSendParameters) error {
 		return errRTPSenderTrackRemoved
 	}
 
-	for idx, trackEncoding := range r.trackEncodings {
+	for idx := range r.trackEncodings {
+		trackEncoding := r.trackEncodings[idx]
+		srtpStream := &srtpWriterFuture{ssrc: parameters.Encodings[idx].SSRC, rtpSender: r}
 		writeStream := &interceptorToTrackLocalWriter{}
+
+		trackEncoding.srtpStream = srtpStream
+		trackEncoding.ssrc = parameters.Encodings[idx].SSRC
 		trackEncoding.context = &baseTrackLocalContext{
 			id:              r.id,
 			params:          r.api.mediaEngine.getRTPParametersByKind(trackEncoding.track.Kind(), []RTPTransceiverDirection{RTPTransceiverDirectionSendonly}),
@@ -318,13 +323,21 @@ func (r *RTPSender) Send(parameters RTPSendParameters) error {
 			codec.RTPCodecCapability,
 			parameters.HeaderExtensions,
 		)
-		srtpStream := trackEncoding.srtpStream
+
+		trackEncoding.rtcpInterceptor = r.api.interceptor.BindRTCPReader(
+			interceptor.RTCPReaderFunc(func(in []byte, a interceptor.Attributes) (n int, attributes interceptor.Attributes, err error) {
+				n, err = trackEncoding.srtpStream.Read(in)
+				return n, a, err
+			}),
+		)
+
 		rtpInterceptor := r.api.interceptor.BindLocalStream(
 			&trackEncoding.streamInfo,
 			interceptor.RTPWriterFunc(func(header *rtp.Header, payload []byte, attributes interceptor.Attributes) (int, error) {
 				return srtpStream.WriteRTP(header, payload)
 			}),
 		)
+
 		writeStream.interceptor.Store(rtpInterceptor)
 	}
 
@@ -355,7 +368,9 @@ func (r *RTPSender) Stop() error {
 	errs := []error{}
 	for _, trackEncoding := range r.trackEncodings {
 		r.api.interceptor.UnbindLocalStream(&trackEncoding.streamInfo)
-		errs = append(errs, trackEncoding.srtpStream.Close())
+		if trackEncoding.srtpStream != nil {
+			errs = append(errs, trackEncoding.srtpStream.Close())
+		}
 	}
 
 	return util.FlattenErrs(errs)

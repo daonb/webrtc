@@ -19,7 +19,6 @@ import (
 	"github.com/pion/logging"
 	"github.com/pion/transport/v3"
 	"github.com/pion/transport/v3/packetio"
-	"github.com/pion/transport/v3/vnet"
 	"golang.org/x/net/proxy"
 )
 
@@ -92,6 +91,7 @@ type SettingEngine struct {
 	disableMediaEngineCopy                    bool
 	srtpProtectionProfiles                    []dtls.SRTPProtectionProfile
 	receiveMTU                                uint
+	iceMaxBindingRequests                     *uint16
 }
 
 // getReceiveMTU returns the configured MTU. If SettingEngine's MTU is configured to 0 it returns the default
@@ -254,16 +254,6 @@ func (e *SettingEngine) SetAnsweringDTLSRole(role DTLSRole) error {
 	return nil
 }
 
-// SetVNet sets the VNet instance that is passed to pion/ice
-//
-// VNet is a virtual network layer for Pion, allowing users to simulate
-// different topologies, latency, loss and jitter. This can be useful for
-// learning WebRTC concepts or testing your application in a lab environment
-// Deprecated: Please use SetNet()
-func (e *SettingEngine) SetVNet(vnet *vnet.Net) {
-	e.SetNet(vnet)
-}
-
 // SetNet sets the Net instance that is passed to pion/ice
 //
 // Net is an network interface layer for Pion, allowing users to replace
@@ -349,6 +339,12 @@ func (e *SettingEngine) SetICEUDPMux(udpMux ice.UDPMux) {
 // SetICEProxyDialer sets the proxy dialer interface based on golang.org/x/net/proxy.
 func (e *SettingEngine) SetICEProxyDialer(d proxy.Dialer) {
 	e.iceProxyDialer = d
+}
+
+// SetICEMaxBindingRequests sets the maximum amount of binding requests
+// that can be sent on a candidate before it is considered invalid.
+func (e *SettingEngine) SetICEMaxBindingRequests(d uint16) {
+	e.iceMaxBindingRequests = &d
 }
 
 // DisableActiveTCP disables using active TCP for ICE. Active TCP is enabled by default
